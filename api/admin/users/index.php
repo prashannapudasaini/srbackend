@@ -6,16 +6,19 @@ header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Max-Age: 3600");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
 
-// Handle preflight OPTIONS request
-if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
-require_once '../../../config/database.php';
 try {
-    $stmt = $pdo->query("SELECT id, name, email, role, phone, DATE(created_at) as joined FROM users ORDER BY created_at DESC");
-    echo json_encode(["status" => "success", "data" => $stmt->fetchAll()]);
-} catch(PDOException $e) {
+    // Left join to see if a user has an 'Active' subscription
+    $query = "
+        SELECT u.*, 
+        (SELECT COUNT(*) FROM subscriptions s WHERE s.user_id = u.id AND s.status = 'Active') as is_subscriber
+        FROM users u 
+        ORDER BY u.created_at DESC
+    ";
+    $stmt = $pdo->query($query);
+    $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    echo json_encode(["status" => "success", "data" => $users]);
+} catch (Exception $e) {
     echo json_encode(["status" => "error", "message" => $e->getMessage()]);
 }
 ?>

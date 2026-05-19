@@ -1,48 +1,52 @@
 <?php
-// ALLOW CORS
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
-header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
-header("Access-Control-Max-Age: 3600");
-header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+header("Access-Control-Allow-Methods: POST, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
-// Handle preflight OPTIONS request
-if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
+if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { exit; }
 
-require_once "../../config/cors.php";
-require_once "../../config/database.php";
+require_once '../../config/database.php';
+
+// Detect DB connection
+if (isset($pdo)) { $db = $pdo; } 
+elseif (class_exists('Database')) { $database = new Database(); $db = $database->getConnection(); } 
+elseif (isset($conn)) { $db = $conn; }
 
 $data = json_decode(file_get_contents("php://input"));
 
 if (!empty($data->name) && !empty($data->email) && !empty($data->password)) {
     try {
         // Check if email already exists
-        $check = $pdo->prepare("SELECT id FROM users WHERE email = ?");
-        $check->execute([$data->email]);
+        $checkQuery = "SELECT id FROM users WHERE email = :email LIMIT 1";
+        $checkStmt = $db->prepare($checkQuery);
+        $checkStmt->execute(['email' => $data->email]);
         
-        if ($check->rowCount() > 0) {
-            http_response_code(400);
-            echo json_encode(["error" => "Email already registered"]);
+        if ($checkStmt->rowCount() > 0) {
+            echo json_encode(["status" => "error", "message" => "Email already registered."]);
             exit;
         }
 
-        // Hash the password for security (NEW DB SCHEMA)
-        $hashed_password = password_hash($data->password, PASSWORD_DEFAULT);
+        // Hash password and insert user (NOW WITH PHONE & ADDRESS)
+        $hashed_password = password_hash($data->password, PASSWORD_BCRYPT);
+        
+        $query = "INSERT INTO users (name, email, password, phone, address) VALUES (:name, :email, :password, :phone, :address)";
+        $stmt = $db->prepare($query);
+        
+        $stmt->execute([
+            'name' => $data->name,
+            'email' => $data->email,
+            'password' => $hashed_password,
+            'phone' => $data->phone ?? null,
+            'address' => $data->address ?? null
+        ]);
 
-        // Insert new user (Default role: customer)
-        $stmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'customer')");
-        $stmt->execute([$data->name, $data->email, $hashed_password]);
-
-        echo json_encode(["success" => true, "message" => "Account created successfully"]);
-    } catch (PDOException $e) {
+        echo json_encode(["status" => "success", "message" => "Registration successful."]);
+    } catch (Exception $e) {
         http_response_code(500);
-        echo json_encode(["error" => "Registration failed: " . $e->getMessage()]);
+        echo json_encode(["status" => "error", "message" => "Registration failed: " . $e->getMessage()]);
     }
 } else {
-    http_response_code(400);
-    echo json_encode(["error" => "Missing required fields"]);
+    echo json_encode(["status" => "error", "message" => "Incomplete data."]);
 }
 ?>
