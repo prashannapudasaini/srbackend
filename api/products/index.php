@@ -16,13 +16,23 @@ require_once '../../config/database.php';
 header('Content-Type: application/json');
 
 try {
-    // Fetch products ordered by most recent[cite: 2]
-    $stmt = $pdo->query("SELECT * FROM products ORDER BY created_at DESC");
+    // --- NEW FILTERING LOGIC ---
+    // Check if the React Native app requested a specific category
+    $categoryFilter = isset($_GET['category']) ? $_GET['category'] : null;
+
+    if ($categoryFilter) {
+        $stmt = $pdo->prepare("SELECT * FROM products WHERE category = ? ORDER BY created_at DESC");
+        $stmt->execute([$categoryFilter]);
+    } else {
+        $stmt = $pdo->query("SELECT * FROM products ORDER BY created_at DESC");
+    }
+    // ---------------------------
+    
     $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $formattedProducts = [];
     foreach ($products as $product) {
-        // Fetch variants for each product[cite: 2]
+        // Fetch variants for each product
         $varStmt = $pdo->prepare("SELECT * FROM product_variants WHERE product_id = ?");
         $varStmt->execute([$product['id']]);
         $variants = $varStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -36,7 +46,7 @@ try {
             "is_premium"   => (bool)$product['is_premium'],
             "is_essential" => (bool)$product['is_essential'],
             
-            // New dynamic columns retrieved as strings[cite: 2]
+            // New dynamic columns retrieved as strings
             "description"  => $product['description'] ?? null,
             "nutrition"    => $product['nutrition'] ?? null,
             "features"     => $product['features'] ?? null,
@@ -49,7 +59,7 @@ try {
                     "description"    => $v['variant_description'],
                     "image"          => $v['variant_image'],
                     
-                    // Added for future flexibility if variants have unique data[cite: 2]
+                    // Added for future flexibility if variants have unique data
                     "nutrition"      => $v['nutrition'] ?? null,
                     "features"       => $v['features'] ?? null
                 ];
