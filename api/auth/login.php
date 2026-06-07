@@ -11,61 +11,72 @@ require_once "../../config/database.php";
 
 $data = json_decode(file_get_contents("php://input"));
 
-if (!empty($data->email) && !empty($data->password)) {
+// Works for both App (which might send 'loginId' or 'email') and Web
+$loginIdentifier = !empty($data->loginId) ? $data->loginId : (!empty($data->email) ? $data->email : null);
+
+if ($loginIdentifier && !empty($data->password)) {
     try {
-        // Fetch user including the permission flag
-        $stmt = $pdo->prepare("SELECT id, name, email, role, password_hash, can_create_admins FROM users WHERE email = ?");
-        $stmt->execute([$data->email]);
+        // Fetch user by Email OR Phone
+        $stmt = $pdo->prepare("SELECT id, name, email, phone, role, password_hash, can_create_admins, failed_attempts, locked_until FROM users WHERE email = ? OR phone = ?");
+        $stmt->execute([$loginIdentifier, $loginIdentifier]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        // Verify password
-        if ($user && password_verify($data->password, $user['password_hash'])) {
-            unset($user['password_hash']); // Never send password hash to the frontend
-            
-            $user['can_create_admins'] = (int)$user['can_create_admins']; // Cast for frontend
-            
-            // Generate a secure token
-            $api_token = bin2hex(random_bytes(32)); 
-            
-            // ==========================================
-            // REQUIRED: Save this token to the database!
-            // ==========================================
-            // You need to add a column named 'api_token' to your users table
-            $updateStmt = $pdo->prepare("UPDATE users SET api_token = ? WHERE id = ?");
-            $updateStmt->execute([$api_token, $user['id']]);
+        if ($user) {
+            // 1. Check if the account is currently locked
+            if ($user['locked_until'] !== null && strtotime($user['locked_until']) > time()) {
+                http_response_code(429);
+                echo json_encode(["status" => "error", "message" => "Account is locked for 24 hours due to too many failed attempts."]);
+                exit();
+            }
 
-            // Standardized Success Response
-            echo json_encode([
-                "status" => "success",
-                "message" => "Login successful",
-                "data" => [
-                    "user" => $user,
-                    "token" => $api_token // The Flutter app will save this and send it in the header
-                ]
-            ]);
+            // 2. Verify password
+            if (password_verify($data->password, $user['password_hash'])) {
+                unset($user['password_hash']); 
+                
+                $user['can_create_admins'] = (int)$user['can_create_admins']; 
+                $api_token = bin2hex(random_bytes(32)); 
+                
+                // Reset failed attempts and set token
+                $updateStmt = $pdo->prepare("UPDATE users SET api_token = ?, failed_attempts = 0, locked_until = NULL WHERE id = ?");
+                $updateStmt->execute([$api_token, $user['id']]);
+
+                echo json_encode([
+                    "status" => "success",
+                    "message" => "Login successful",
+                    "data" => ["user" => $user, "token" => $api_token]
+                ]);
+            } else {
+                // 3. Handle Failed Attempt
+                $attempts = (int)$user['failed_attempts'];
+                if ($user['locked_until'] !== null && strtotime($user['locked_until']) <= time()) {
+                    $attempts = 0; // Reset if lock expired
+                }
+                
+                $attempts += 1;
+                $locked_until = null;
+                $errorMessage = "Invalid credentials";
+
+                if ($attempts >= 5) {
+                    $locked_until = date('Y-m-d H:i:s', strtotime('+24 hours'));
+                    $errorMessage = "Account locked for 24 hours due to too many failed attempts.";
+                }
+
+                $updateStmt = $pdo->prepare("UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?");
+                $updateStmt->execute([$attempts, $locked_until, $user['id']]);
+
+                http_response_code(401);
+                echo json_encode(["status" => "error", "message" => $errorMessage]);
+            }
         } else {
             http_response_code(401);
-            // Standardized Error Response
-            echo json_encode([
-                "status" => "error",
-                "message" => "Invalid email or password",
-                "data" => null
-            ]);
+            echo json_encode(["status" => "error", "message" => "Invalid credentials"]);
         }
     } catch (PDOException $e) {
         http_response_code(500);
-        echo json_encode([
-            "status" => "error", 
-            "message" => "Database error: " . $e->getMessage(),
-            "data" => null
-        ]);
+        echo json_encode(["status" => "error", "message" => "Database error: " . $e->getMessage()]);
     }
 } else {
     http_response_code(400);
-    echo json_encode([
-        "status" => "error", 
-        "message" => "Email and password are required",
-        "data" => null
-    ]);
+    echo json_encode(["status" => "error", "message" => "Login ID and password are required"]);
 }
 ?>
