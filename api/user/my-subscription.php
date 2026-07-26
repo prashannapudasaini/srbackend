@@ -1,11 +1,6 @@
 <?php
-header("Access-Control-Allow-Origin: *");
-header("Content-Type: application/json; charset=UTF-8");
-header("Access-Control-Allow-Methods: GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
-
-if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { exit; }
-
+// Load central CORS and Database configs
+require_once '../../config/cors.php';
 require_once '../../config/database.php';
 
 $user_id = isset($_GET['user_id']) ? $_GET['user_id'] : null;

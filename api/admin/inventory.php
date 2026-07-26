@@ -2,24 +2,43 @@
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
+header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Admin-Token");
 
 if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { exit; }
 
+// 1. INITIALIZE DATABASE FIRST
 require_once '../../config/database.php';
-
-// --- FOOLPROOF DATABASE CONNECTION DETECTOR ---
-if (isset($pdo)) {
-    $db = $pdo;
-} elseif (class_exists('Database')) {
+$db_conn = isset($pdo) ? $pdo : (isset($db) ? $db : (isset($conn) ? $conn : null));
+if (!$db_conn && class_exists('Database')) {
     $database = new Database();
-    $db = $database->getConnection();
-} elseif (isset($conn)) {
-    $db = $conn;
-} else {
-    echo json_encode(["status" => "error", "message" => "Database connection not found."]);
-    exit;
+    $db_conn = $database->getConnection();
 }
+$db = $db_conn; // Inventory relies on $db specifically
+
+// 2. DYNAMIC TOKEN SECURITY CHECK
+$adminToken = '';
+if (isset($_SERVER['HTTP_X_ADMIN_TOKEN'])) {
+    $adminToken = $_SERVER['HTTP_X_ADMIN_TOKEN'];
+} elseif (function_exists('apache_request_headers')) {
+    $headers = apache_request_headers();
+    $adminToken = isset($headers['X-Admin-Token']) ? $headers['X-Admin-Token'] : '';
+}
+
+if (empty($adminToken)) {
+    http_response_code(401);
+    echo json_encode(["status" => "error", "message" => "Unauthorized. Token missing."]);
+    exit();
+}
+
+$stmt = $db->prepare("SELECT id FROM users WHERE api_token = ? AND role = 'admin' LIMIT 1");
+$stmt->execute([$adminToken]);
+
+if (!$stmt->fetch()) {
+    http_response_code(401);
+    echo json_encode(["status" => "error", "message" => "Unauthorized. Invalid or expired Admin Token."]);
+    exit();
+}
+// --- END SECURITY CHECK ---
 
 try {
     // 1. Get Current Milk Stock

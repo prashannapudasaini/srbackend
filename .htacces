@@ -1,0 +1,29 @@
+# ==============================================================================
+# SITARAM DAIRY API - BACKEND APACHE/LITESPEED CONFIGURATION
+# ==============================================================================
+
+# 1. Pass Custom Headers to PHP
+# LiteSpeed/Apache sometimes strips non-standard headers before PHP can read them. 
+# This ensures your 'X-Admin-Token' makes it securely to your backend.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    
+    # Pass standard Authorization header
+    RewriteCond %{HTTP:Authorization} ^(.*)
+    RewriteRule .* - [e=HTTP_AUTHORIZATION:%1]
+
+    # Pass your custom Admin Token header
+    RewriteCond %{HTTP:X-Admin-Token} ^(.*)
+    RewriteRule .* - [e=HTTP_X_ADMIN_TOKEN:%1]
+</IfModule>
+
+# 2. Allow OPTIONS Preflight Requests (CORS Fix)
+# Ensures LiteSpeed respects React's preflight requests automatically.
+<IfModule mod_headers.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_METHOD} OPTIONS
+    RewriteRule ^(.*)$ $1 [R=200,L]
+</IfModule>
+
+# 3. Default Charset
+AddDefaultCharset UTF-8

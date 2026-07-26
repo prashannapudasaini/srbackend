@@ -3,19 +3,29 @@
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
-if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { exit; }
+// 🔥 THE FIX: Added X-Admin-Token and X-Requested-With to allow the React Admin Panel to connect
+header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-Admin-Token");
 
-// FIX: Correct relative path to config directory
+// Instantly resolve preflight requests
+if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { 
+    http_response_code(200);
+    exit; 
+}
+
+// Correct relative path to config directory
 require_once '../../config/database.php';
 
 try {
-    // Fetch all orders using correct database schema columns
+    // 1. Initialize the Database Connection
+    $database = new Database();
+    $db = $database->connect();
+
+    // 2. Fetch all orders 
     $query = "
         SELECT 
             id, 
-            created_at as date, 
+            created_at, 
             total_amount, 
             payment_status, 
             order_status,
@@ -27,29 +37,39 @@ try {
         ORDER BY created_at DESC
     ";
     
-    $stmt = $pdo->query($query);
+    $stmt = $db->query($query);
     $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Loop through orders and fetch matching line items
+    // 3. Loop through orders and fetch matching line items
     foreach ($orders as &$order) {
+        
         $itemQuery = "
-            SELECT oi.quantity, oi.unit_price as price, p.name 
+            SELECT oi.quantity, oi.unit_price as price, p.name, p.base_image 
             FROM order_items oi 
             JOIN products p ON oi.product_id = p.id 
-            WHERE oi.order_id = ?
+            WHERE oi.order_id = :order_id
         ";
-        $itemStmt = $pdo->prepare($itemQuery);
-        $itemStmt->execute([$order['id']]);
+        
+        $itemStmt = $db->prepare($itemQuery);
+        $itemStmt->execute([':order_id' => $order['id']]);
+        
+        // Attach the items to this specific order
         $order['items'] = $itemStmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    // 4. Output the final JSON
     echo json_encode([
         "status" => "success",
         "data" => $orders
     ]);
 
-} catch (Exception $e) {
+} catch (PDOException $e) {
+    // Catch Database-specific errors
     http_response_code(500);
-    echo json_encode(["status" => "error", "message" => "Failed to load orders: " . $e->getMessage()]);
+    echo json_encode(["status" => "error", "message" => "Database Error: " . $e->getMessage()]);
+} catch (Exception $e) {
+    // Catch general errors
+    http_response_code(500);
+    echo json_encode(["status" => "error", "message" => "System Error: " . $e->getMessage()]);
 }
 ?>

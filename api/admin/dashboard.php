@@ -1,15 +1,60 @@
 <?php
+// ALLOW CORS
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
-if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
-    exit;
+// 🔥 FIXED: Added X-Requested-With back in
+header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-Admin-Token");
+
+if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { 
+    http_response_code(200);
+    exit; 
 }
 
-// Require your existing database file which provides the $pdo variable
+// 1. INITIALIZE DATABASE FIRST
 require_once '../../config/database.php';
+$db_conn = isset($pdo) ? $pdo : (isset($db) ? $db : (isset($conn) ? $conn : null));
+if (!$db_conn && class_exists('Database')) {
+    $database = new Database();
+    $db_conn = $database->getConnection();
+}
+$pdo = $db_conn; // Dashboard relies on $pdo specifically
+
+// 2. BULLETPROOF TOKEN SECURITY CHECK
+$adminToken = '';
+
+// Check $_SERVER first (Standard for Apache)
+if (isset($_SERVER['HTTP_X_ADMIN_TOKEN']) && !empty($_SERVER['HTTP_X_ADMIN_TOKEN'])) {
+    $adminToken = $_SERVER['HTTP_X_ADMIN_TOKEN'];
+} else {
+    // Fallback: Check raw headers (Catches lowercase issues in Nginx/Vite)
+    $headers = function_exists('getallheaders') ? getallheaders() : [];
+    
+    // Convert all keys to lowercase for a foolproof check
+    $headers = array_change_key_case($headers, CASE_LOWER);
+    
+    if (isset($headers['x-admin-token']) && !empty($headers['x-admin-token'])) {
+        $adminToken = $headers['x-admin-token'];
+    }
+}
+
+// Check if token is entirely missing
+if (empty($adminToken)) {
+    http_response_code(401);
+    echo json_encode(["status" => "error", "message" => "Unauthorized. Token missing."]);
+    exit();
+}
+
+$stmt = $pdo->prepare("SELECT id FROM users WHERE api_token = ? AND role = 'admin' LIMIT 1");
+$stmt->execute([$adminToken]);
+
+if (!$stmt->fetch()) {
+    http_response_code(401);
+    echo json_encode(["status" => "error", "message" => "Unauthorized. Invalid or expired Admin Token."]);
+    exit();
+}
+// --- END SECURITY CHECK ---
 
 try {
     // ==========================================
@@ -20,7 +65,6 @@ try {
     $newCustomers = 0;
     $pendingOrders = 0;
 
-    // Notice we are using $pdo->query() now to match your setup!
     try { $totalSales = $pdo->query("SELECT SUM(total_amount) FROM orders WHERE status = 'Completed'")->fetchColumn() ?: 0; } catch (Exception $e) {}
     try { $activeSubs = $pdo->query("SELECT COUNT(*) FROM subscriptions WHERE status = 'Active'")->fetchColumn() ?: 0; } catch (Exception $e) {}
     try { $newCustomers = $pdo->query("SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)")->fetchColumn() ?: 0; } catch (Exception $e) {}

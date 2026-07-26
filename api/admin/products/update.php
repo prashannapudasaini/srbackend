@@ -4,7 +4,7 @@ header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Max-Age: 3600");
-header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With");
+header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Admin-Token");
 
 // Handle preflight OPTIONS request
 if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
@@ -12,8 +12,39 @@ if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
     exit();
 }
 
+// 1. INITIALIZE DATABASE FIRST
 require_once '../../../config/database.php';
-header('Content-Type: application/json');
+$db_conn = isset($pdo) ? $pdo : (isset($db) ? $db : (isset($conn) ? $conn : null));
+if (!$db_conn && class_exists('Database')) {
+    $database = new Database();
+    $db_conn = $database->getConnection();
+}
+$pdo = $db_conn;
+
+// 2. DYNAMIC TOKEN SECURITY CHECK
+$adminToken = '';
+if (isset($_SERVER['HTTP_X_ADMIN_TOKEN'])) {
+    $adminToken = $_SERVER['HTTP_X_ADMIN_TOKEN'];
+} elseif (function_exists('apache_request_headers')) {
+    $headers = apache_request_headers();
+    $adminToken = isset($headers['X-Admin-Token']) ? $headers['X-Admin-Token'] : '';
+}
+
+if (empty($adminToken)) {
+    http_response_code(401);
+    echo json_encode(["status" => "error", "message" => "Unauthorized. Token missing."]);
+    exit();
+}
+
+$stmt = $pdo->prepare("SELECT id FROM users WHERE api_token = ? AND role = 'admin' LIMIT 1");
+$stmt->execute([$adminToken]);
+
+if (!$stmt->fetch()) {
+    http_response_code(401);
+    echo json_encode(["status" => "error", "message" => "Unauthorized. Invalid or expired Admin Token."]);
+    exit();
+}
+// --- END SECURITY CHECK ---
 
 $data = json_decode(file_get_contents('php://input'), true);
 
@@ -26,7 +57,7 @@ try {
     $pdo->beginTransaction();
     $productId = null;
     
-    // Extract boolean values for checkboxes[cite: 1]
+    // Extract boolean values for checkboxes
     $is_premium = !empty($data['is_premium']) ? 1 : 0;
     $is_essential = !empty($data['is_essential']) ? 1 : 0;
 
@@ -36,7 +67,7 @@ try {
     $features = isset($data['features']) ? json_encode($data['features']) : null;
 
     if (isset($data['id']) && is_numeric($data['id'])) {
-        // UPDATE existing product[cite: 1]
+        // UPDATE existing product
         $productId = $data['id'];
         $sql = "UPDATE products SET 
                 name=?, category=?, base_image=?, badge=?, 
@@ -50,10 +81,10 @@ try {
             $nutrition, $features, $productId
         ]);
 
-        // Clear existing variants before re-inserting the updated list[cite: 1]
+        // Clear existing variants before re-inserting the updated list
         $pdo->prepare("DELETE FROM product_variants WHERE product_id=?")->execute([$productId]);
     } else {
-        // INSERT new product[cite: 1]
+        // INSERT new product
         $sql = "INSERT INTO products 
                 (name, category, base_image, badge, is_premium, is_essential, description, nutrition, features) 
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
@@ -65,7 +96,7 @@ try {
         $productId = $pdo->lastInsertId();
     }
 
-    // Save Variants[cite: 1]
+    // Save Variants
     if (isset($data['variants']) && is_array($data['variants'])) {
         $varSql = "INSERT INTO product_variants 
                    (product_id, size_flavor, price_npr, stock_quantity, variant_description, variant_image) 

@@ -1,34 +1,30 @@
 <?php
 // backend/setup_admin.php
-require_once 'config/database.php';
+require_once "config/database.php";
 
-// Detect DB connection
-if (isset($pdo)) { $db = $pdo; }
-elseif (class_exists('Database')) { $database = new Database(); $db = $database->getConnection(); }
-elseif (isset($conn)) { $db = $conn; }
+$email = "adminsitaram@gmail.com";
+$password = "adminPASSWORD@"; // The password you want to use
+$hashed_password = password_hash($password, PASSWORD_DEFAULT);
 
 try {
-    // 1. Delete all existing admins to start fresh
-    $db->query("DELETE FROM users WHERE role = 'admin'");
+    // Check if the admin already exists
+    $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ?");
+    $stmt->execute([$email]);
+    $user = $stmt->fetch();
 
-    // 2. Hash the new secure password
-    $email = "adminsitaram@gmail.com";
-    $password = "adminPASSWORD@#";
-    $hashed_password = password_hash($password, PASSWORD_BCRYPT);
-
-    // 3. Insert the new Super Admin
-    $query = "INSERT INTO users (name, email, password, role, can_create_admins) VALUES (?, ?, ?, ?, ?)";
-    $stmt = $db->prepare($query);
-    $stmt->execute(['Sita Ram Master', $email, $hashed_password, 'admin', 1]);
-
-    echo "<h2 style='color: green;'>✅ Success!</h2>";
-    echo "<p>Existing admins removed. New Super Admin created.</p>";
-    echo "<b>Email:</b> " . $email . "<br>";
-    echo "<b>Password:</b> " . $password . "<br><br>";
-    echo "<i>Security Notice: Please delete this setup_admin.php file now.</i>";
-
-} catch (Exception $e) {
-    echo "<h2 style='color: red;'>❌ Error</h2>";
-    echo $e->getMessage();
+    if ($user) {
+        // Update existing user to ensure they are an admin with the right password
+        $sql = "UPDATE users SET password_hash = ?, role = 'admin', failed_attempts = 0, locked_until = NULL WHERE email = ?";
+        $pdo->prepare($sql)->execute([$hashed_password, $email]);
+        echo "<h1>Success!</h1><p>Admin password updated.</p>";
+    } else {
+        // Insert brand new admin
+        $sql = "INSERT INTO users (name, email, phone, address, password_hash, role, can_create_admins, created_at) 
+                VALUES ('Super Admin', ?, '9800000000', 'Kathmandu', ?, 'admin', 1, NOW())";
+        $pdo->prepare($sql)->execute([$email, $hashed_password]);
+        echo "<h1>Success!</h1><p>New Admin account created.</p>";
+    }
+} catch (PDOException $e) {
+    echo "Database error: " . $e->getMessage();
 }
 ?>
